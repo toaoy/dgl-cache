@@ -270,6 +270,16 @@ if(USE_TVM)
   message(STATUS "Build with TVM runtime and featgraph kernels.")
 endif(USE_TVM)
 
+if(USE_CUDA)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_GPU_CACHE")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUSE_GPU_CACHE")
+  add_subdirectory("third_party/HugeCTR/gpu_cache/src")
+  target_include_directories(gpu_cache PRIVATE "third_party/HugeCTR/gpu_cache/include")
+  target_include_directories(dgl PRIVATE "third_party/HugeCTR/gpu_cache/include")
+  list(APPEND DGL_LINKER_LIBS gpu_cache)
+  message(STATUS "Build with HugeCTR GPU embedding cache.")
+endif(USE_CUDA)
+
 # support PARALLEL_ALGORITHMS
 if (LIBCXX_ENABLE_PARALLEL_ALGORITHMS)
   add_definitions(-DPARALLEL_ALGORITHMS)

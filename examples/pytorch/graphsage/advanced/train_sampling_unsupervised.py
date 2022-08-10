@@ -70,10 +70,13 @@ def run(proc_id, n_gpus, args, devices, data):
                                           rank=proc_id)
     train_nid, val_nid, test_nid, n_classes, g, nfeat, labels = data
 
+    cache = None
     if args.data_device == 'gpu':
         nfeat = nfeat.to(device)
     elif args.data_device == 'uva':
         nfeat = dgl.contrib.UnifiedTensor(nfeat, device=device)
+        if args.cache_size > 0:
+            cache = dgl.contrib.GpuCache(args.cache_size, nfeat.shape[1])
     in_feats = nfeat.shape[1]
 
     # Create PyTorch DataLoader for constructing blocks
@@ -134,7 +137,15 @@ def run(proc_id, n_gpus, args, devices, data):
         tic_step = time.time()
         for step, (input_nodes, pos_graph, neg_graph, blocks) in enumerate(dataloader):
             input_nodes = input_nodes.to(nfeat.device)
-            batch_inputs = nfeat[input_nodes].to(device)
+            cache_hit_rate = 0
+            if cache is None:
+                batch_inputs = nfeat[input_nodes].to(device)
+            else:
+                batch_inputs, missing_index, missing_keys = cache.query(input_nodes)
+                missing_values = nfeat[missing_keys]
+                batch_inputs[missing_index] = missing_values
+                cache.replace(missing_keys, missing_values)
+                cache_hit_rate = 1 - missing_keys.shape[0] / input_nodes.shape[0]
             blocks = [block.int() for block in blocks]
             d_step = time.time()
 
@@ -154,8 +165,8 @@ def run(proc_id, n_gpus, args, devices, data):
             iter_t.append(t - d_step)
             if step % args.log_every == 0 and proc_id == 0:
                 gpu_mem_alloc = th.cuda.max_memory_allocated() / 1000000 if th.cuda.is_available() else 0
-                print('[{}]Epoch {:05d} | Step {:05d} | Loss {:.4f} | Speed (samples/sec) {:.4f}|{:.4f} | Load {:.4f}| train {:.4f} | GPU {:.1f} MB'.format(
-                    proc_id, epoch, step, loss.item(), np.mean(iter_pos[3:]), np.mean(iter_neg[3:]), np.mean(iter_d[3:]), np.mean(iter_t[3:]), gpu_mem_alloc))
+                print('[{}]Epoch {:05d} | Step {:05d} | Loss {:.4f} | Speed (samples/sec) {:.4f}|{:.4f} | Load {:.4f}| train {:.4f} | GPU {:.1f} MB | Hit Rate {:.4f}'.format(
+                    proc_id, epoch, step, loss.item(), np.mean(iter_pos[3:]), np.mean(iter_neg[3:]), np.mean(iter_d[3:]), np.mean(iter_t[3:]), gpu_mem_alloc, cache_hit_rate))
             tic_step = time.time()
 
         toc = time.time()
@@ -250,6 +261,7 @@ if __name__ == '__main__':
                                 "Use 'cpu' to keep the features on host memory and "
                                 "'uva' to enable UnifiedTensor (GPU zero-copy access on "
                                 "pinned host memory).")
+    argparser.add_argument('--cache-size', type=int, default=0)
     args = argparser.parse_args()
 
     main(args)

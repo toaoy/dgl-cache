@@ -76,7 +76,7 @@ def run(proc_id, n_gpus, args, devices, data):
         if args.cache_size <= 0:
             nfeat = dgl.contrib.UnifiedTensor(nfeat, device=device)
         else:
-            nfeat = dgl.contrib.CachedTensor(nfeat, args.cache_size)
+            nfeat = dgl.contrib.GPUCachedTensor(nfeat, args.cache_size)
     in_feats = nfeat.shape[1]
 
     # Create PyTorch DataLoader for constructing blocks

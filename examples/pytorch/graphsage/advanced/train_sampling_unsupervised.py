@@ -70,13 +70,13 @@ def run(proc_id, n_gpus, args, devices, data):
                                           rank=proc_id)
     train_nid, val_nid, test_nid, n_classes, g, nfeat, labels = data
 
-    cache = None
     if args.data_device == 'gpu':
         nfeat = nfeat.to(device)
     elif args.data_device == 'uva':
-        nfeat = dgl.contrib.UnifiedTensor(nfeat, device=device)
-        if args.cache_size > 0:
-            cache = dgl.contrib.GpuCache(args.cache_size, nfeat.shape[1])
+        if args.cache_size <= 0:
+            nfeat = dgl.contrib.UnifiedTensor(nfeat, device=device)
+        else:
+            nfeat = dgl.contrib.CachedTensor(nfeat, args.cache_size)
     in_feats = nfeat.shape[1]
 
     # Create PyTorch DataLoader for constructing blocks
@@ -137,15 +137,8 @@ def run(proc_id, n_gpus, args, devices, data):
         tic_step = time.time()
         for step, (input_nodes, pos_graph, neg_graph, blocks) in enumerate(dataloader):
             input_nodes = input_nodes.to(nfeat.device)
-            cache_hit_rate = 0
-            if cache is None:
-                batch_inputs = nfeat[input_nodes].to(device)
-            else:
-                batch_inputs, missing_index, missing_keys = cache.query(input_nodes)
-                missing_values = nfeat[missing_keys]
-                batch_inputs[missing_index] = missing_values
-                cache.replace(missing_keys, missing_values)
-                cache_hit_rate = 1 - missing_keys.shape[0] / input_nodes.shape[0]
+            batch_inputs = nfeat[input_nodes].to(device)
+            cache_hit_rate = nfeat.hit_rate if hasattr(nfeat, 'hit_rate') else 0
             blocks = [block.int() for block in blocks]
             d_step = time.time()
 

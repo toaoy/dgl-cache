@@ -44,7 +44,7 @@ std::pair<HeteroSubgraph, std::vector<FloatArray>> ExcludeCertainEdges(
         continue;
       }
       ATEN_ID_TYPE_SWITCH(hg_view->DataType(), IdType, {
-        ATEN_FLOAT_TYPE_SWITCH((weights ? (*weights)[etype]->dtype : DLDataType{kDLFloat, 8*sizeof(float), 1}), FloatType, "weights", {
+        ATEN_FLOAT_TYPE_SWITCH((weights ? (*weights)[etype]->dtype : DGLDataType{kDGLFloat, 8*sizeof(float), 1}), FloatType, "weights", {
           IdType* idx_data = edge_ids.Ptr<IdType>();
           IdType* induced_edges_data = sg.induced_edges[etype].Ptr<IdType>();
           FloatType* weights_data = weights ? (*weights)[etype].Ptr<FloatType>() : nullptr;
@@ -94,7 +94,7 @@ std::pair<HeteroSubgraph, std::vector<FloatArray>> SampleLabors(
   CHECK_EQ(fanouts.size(), hg->NumEdgeTypes())
     << "Number of fanout values must match the number of edge types.";
 
-  DLContext ctx = aten::GetContextOf(nodes);
+  DGLContext ctx = aten::GetContextOf(nodes);
 
   std::vector<HeteroGraphPtr> subrels(hg->NumEdgeTypes());
   std::vector<FloatArray> subimportances(hg->NumEdgeTypes());

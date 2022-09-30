@@ -159,7 +159,7 @@ COOMatrix COOReorder(COOMatrix coo, runtime::NDArray new_row_ids, runtime::NDArr
 template <DGLDeviceType XPU, typename IdType>
 CSRMatrix CSRRemove(CSRMatrix csr, IdArray entries);
 
-template <DLDeviceType XPU, typename IdType, typename FloatType>
+template <DGLDeviceType XPU, typename IdType, typename FloatType>
 std::pair<COOMatrix, FloatArray> CSRLaborSampling(
     CSRMatrix mat, IdArray NIDs, IdArray rows, int64_t num_samples, FloatArray prob, IdArray random_seed, IdArray cnt, int importance_sampling);
 
@@ -272,7 +272,7 @@ std::pair<bool, bool> COOIsSorted(COOMatrix coo);
 template <DGLDeviceType XPU, typename IdType>
 COOMatrix COORemove(COOMatrix coo, IdArray entries);
 
-template <DLDeviceType XPU, typename IdType, typename FloatType>
+template <DGLDeviceType XPU, typename IdType, typename FloatType>
 std::pair<COOMatrix, FloatArray> COOLaborSampling(
     COOMatrix mat, IdArray NIDs, IdArray rows, int64_t num_samples, FloatArray prob, IdArray random_seed, IdArray cnt, int importance_sampling);
 

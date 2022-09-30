@@ -1,5 +1,5 @@
 /*!
- *  Copyright (c) 2019 by Contributors
+ *  Copyright (c) 2019-2022 by Contributors
  * \file array/array_op.h
  * \brief Array operator templates
  */
@@ -159,6 +159,10 @@ COOMatrix COOReorder(COOMatrix coo, runtime::NDArray new_row_ids, runtime::NDArr
 template <DGLDeviceType XPU, typename IdType>
 CSRMatrix CSRRemove(CSRMatrix csr, IdArray entries);
 
+template <DLDeviceType XPU, typename IdType, typename FloatType>
+std::pair<COOMatrix, FloatArray> CSRLaborSampling(
+    CSRMatrix mat, IdArray NIDs, IdArray rows, int64_t num_samples, FloatArray prob, IdArray random_seed, IdArray cnt, int importance_sampling);
+
 // FloatType is the type of probability data.
 template <DGLDeviceType XPU, typename IdType, typename FloatType>
 COOMatrix CSRRowWiseSampling(
@@ -267,6 +271,10 @@ std::pair<bool, bool> COOIsSorted(COOMatrix coo);
 
 template <DGLDeviceType XPU, typename IdType>
 COOMatrix COORemove(COOMatrix coo, IdArray entries);
+
+template <DLDeviceType XPU, typename IdType, typename FloatType>
+std::pair<COOMatrix, FloatArray> COOLaborSampling(
+    COOMatrix mat, IdArray NIDs, IdArray rows, int64_t num_samples, FloatArray prob, IdArray random_seed, IdArray cnt, int importance_sampling);
 
 // FloatType is the type of probability data.
 template <DGLDeviceType XPU, typename IdType, typename FloatType>

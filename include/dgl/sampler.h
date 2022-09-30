@@ -23,7 +23,7 @@ class SamplerOp {
    * \brief Sample a graph from the seed vertices with neighbor sampling.
    * The neighbors are sampled with a uniform distribution.
    *
-   * \param graphs A graph for sampling.
+   * \param graph A graph for sampling.
    * \param seeds the nodes where we should start to sample.
    * \param edge_type the type of edges we should sample neighbors.
    * \param num_hops the number of hops to sample neighbors.
@@ -44,7 +44,7 @@ class SamplerOp {
    * \brief Sample a graph from the seed vertices with layer sampling.
    * The layers are sampled with a uniform distribution.
    *
-   * \param graphs A graph for sampling.
+   * \param graph A graph for sampling.
    * \param seeds the nodes where we should start to sample.
    * \param edge_type the type of edges we should sample neighbors.
    * \param layer_sizes The size of layers.

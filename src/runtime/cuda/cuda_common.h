@@ -38,7 +38,7 @@ class CUDAWorkspaceAllocator {
  public:
   typedef char value_type;
 
-  void operator()(void* ptr) {
+  void operator()(void* ptr) const {
     runtime::DeviceAPI::Get(ctx)->FreeWorkspace(ctx, ptr);
   }
 
@@ -47,16 +47,16 @@ class CUDAWorkspaceAllocator {
   CUDAWorkspaceAllocator & operator=(const CUDAWorkspaceAllocator &) = default;
 
   template <typename T>
-  std::unique_ptr<T, CUDAWorkspaceAllocator> alloc_unique(std::size_t size) {
+  std::unique_ptr<T, CUDAWorkspaceAllocator> alloc_unique(std::size_t size) const {
     return std::unique_ptr<T, CUDAWorkspaceAllocator>(reinterpret_cast<T *>(
         runtime::DeviceAPI::Get(ctx)->AllocWorkspace(ctx, sizeof(T) * size)), *this);
   }
 
-  char *allocate(std::ptrdiff_t size) {
+  char *allocate(std::ptrdiff_t size) const {
     return reinterpret_cast<char *>(runtime::DeviceAPI::Get(ctx)->AllocWorkspace(ctx, size));
   }
 
-  void deallocate(char* ptr, std::size_t) {
+  void deallocate(char* ptr, std::size_t) const {
     runtime::DeviceAPI::Get(ctx)->FreeWorkspace(ctx, ptr);
   }
 };

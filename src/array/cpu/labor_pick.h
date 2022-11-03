@@ -236,7 +236,10 @@ std::pair<COOMatrix, FloatArray> CSRLaborPick(
       // itb stands for a pair of iterator and boolean indicating if insertion was successful
       auto itb = rand_map.emplace(v, 0);
       if (itb.second) {
-        std::default_random_engine ng(random_seed ^ t);
+        std::seed_seq seq{random_seed, (uint64_t)t};
+        int seed[1];
+        seq.generate(seed, seed + 1);
+        std::default_random_engine ng(seed[0]);
         std::uniform_real_distribution<FloatType> uni;
         // rolled random number r_t is a function of the random_seed and t
         itb.first->second = uni(ng);

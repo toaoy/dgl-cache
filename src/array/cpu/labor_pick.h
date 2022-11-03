@@ -222,9 +222,6 @@ std::pair<COOMatrix, FloatArray> CSRLaborPick(
   const uint64_t random_seed = IsNullArray(random_seed_arr) ?
       RandomEngine::ThreadLocal()->RandInt(1000000000) : random_seed_arr.Ptr<int64_t>()[0];
 
-  const pcg32 ng0(random_seed);
-  std::uniform_real_distribution<FloatType> uni;
-
   // compute number of edges first and store randoms
   IdxType num_edges = 0;
   phmap::flat_hash_map<IdxType, FloatType> rand_map;
@@ -239,9 +236,8 @@ std::pair<COOMatrix, FloatArray> CSRLaborPick(
       // itb stands for a pair of iterator and boolean indicating if insertion was successful
       auto itb = rand_map.emplace(v, 0);
       if (itb.second) {
-        auto ng = ng0;
-        ng.discard(t);
-        uni.reset();
+        pcg32 ng(random_seed, t);
+        std::uniform_real_distribution<FloatType> uni;
         // rolled random number r_t is a function of the random_seed and t
         itb.first->second = uni(ng);
       }

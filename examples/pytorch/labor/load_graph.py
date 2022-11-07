@@ -69,7 +69,7 @@ def load_dataset(dataset_name):
         if multilabel:
             g.ndata['labels'] = g.ndata['labels'].to(dtype=th.float32)
     elif dataset_name in ['ogbn-products', 'ogbn-arxiv', 'ogbn-papers100M']:
-        g, n_classes = load_ogb(dataset_name)
+        g, n_classes = load_ogb(dataset_name, '/root/.dgl/ogb')
     else:
         raise ValueError('unknown dataset')
     

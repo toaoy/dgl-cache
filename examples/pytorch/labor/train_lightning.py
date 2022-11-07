@@ -34,7 +34,7 @@ import itertools
 from load_graph import load_dataset, inductive_split
 
 from torchmetrics import Accuracy
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback
+from pytorch_lightning.callbacks import ModelCheckpoint, Callback, EarlyStopping
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 from model import SAGE
@@ -110,15 +110,20 @@ class SAGELightning(LightningModule):
 
     def configure_optimizers(self):
         optimizer = th.optim.Adam(self.parameters(), lr=self.lr)
+        # lr_scheduler = th.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, factor=0.8, patience=1000, verbose=True)
+        # lr_schedulers = {'scheduler': lr_scheduler, 'monitor': 'train_loss'}
         return optimizer
 
 
 class DataModule(LightningDataModule):
-    def __init__(self, dataset_name, data_cpu=False, graph_cpu=False, use_uva=False, fan_out=[10, 25],
-                 device=th.device('cpu'), batch_size=1000, num_workers=4, sampler='labor', importance_sampling=0, layer_dependency=False, batch_dependency=1):
+    def __init__(self, dataset_name, undirected, data_cpu=False, graph_cpu=False, use_uva=False, fan_out=[10, 25],
+                 device=th.device('cpu'), batch_size=1000, num_workers=4, sampler='labor', importance_sampling=0, layer_dependency=False):
         super().__init__()
 
         g, n_classes, multilabel = load_dataset(dataset_name)
+        if undirected:
+            src, dst = g.all_edges()
+            g.add_edges(dst, src)
         cast_to_int = max(g.num_nodes(), g.num_edges()) <= 2e9
         if cast_to_int:
             g = g.int()
@@ -131,14 +136,14 @@ class DataModule(LightningDataModule):
         if sampler == 'neighbor':
             sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts) #, prefetch_node_feats='features', prefetch_labels='labels')
         else:
-            sampler = dgl.dataloading.LaborSampler(fanouts, importance_sampling=importance_sampling, layer_dependency=layer_dependency, batch_dependency=batch_dependency) #, prefetch_node_feats='features', prefetch_edge_feats='edge_weights', prefetch_labels='labels')
+            sampler = dgl.dataloading.LaborSampler(fanouts, importance_sampling=importance_sampling, layer_dependency=layer_dependency) #, prefetch_node_feats='features', prefetch_edge_feats='edge_weights', prefetch_labels='labels')
 
         dataloader_device = th.device('cpu')
         if use_uva or (not data_cpu and not graph_cpu):
             train_nid = train_nid.to(device)
             val_nid = val_nid.to(device)
             test_nid = test_nid.to(device)
-            g = g.formats(['csc', 'csr', 'coo'])
+            g = g.formats(['csc'])
             if not data_cpu:
                 g = g.to(device)
             elif not graph_cpu:
@@ -223,6 +228,9 @@ class BatchSizeCallback(Callback):
         else:
             values = feats[input_nodes.long()]
         mfgs[0].srcdata['features'] = values.to(trainer.datamodule.device)
+    
+    def on_validation_batch_start(self, trainer, datamodule, batch, batch_idx, dataloader_idx):
+        self.on_train_batch_start(trainer, datamodule, batch, batch_idx)
 
     def on_train_batch_end(self, trainer, datamodule, outputs, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
@@ -235,7 +243,7 @@ class BatchSizeCallback(Callback):
             trainer.reset_val_dataloader()
             self.clear()
     
-def evaluate(model, g, val_nid, device):
+def evaluate(model, g, val_nid, device, batch_size, num_workers):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -246,11 +254,10 @@ def evaluate(model, g, val_nid, device):
     nfeat = g.ndata['features']
     labels = g.ndata['labels']
     with th.no_grad():
-        pred = model.module.inference(g, nfeat, device, args.batch_size, args.num_workers)
+        pred = model.module.inference(g, nfeat, device, batch_size, num_workers)
     model.train()
     test_acc = Accuracy()
     return test_acc(th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1), labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
-
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
@@ -258,13 +265,11 @@ if __name__ == '__main__':
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument('--dataset', type=str, default='reddit')
     argparser.add_argument('--num-epochs', type=int, default=-1)
-    argparser.add_argument('--num-steps', type=int, default=5000)
+    argparser.add_argument('--num-steps', type=int, default=-1)
     argparser.add_argument('--num-hidden', type=int, default=256)
     argparser.add_argument('--num-layers', type=int, default=3)
     argparser.add_argument('--fan-out', type=str, default='10,10,10')
     argparser.add_argument('--batch-size', type=int, default=1000)
-    argparser.add_argument('--log-every', type=int, default=20)
-    argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--lr', type=float, default=0.001)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-workers', type=int, default=0,
@@ -284,10 +289,11 @@ if __name__ == '__main__':
     argparser.add_argument('--sampler', type=str, default='labor')
     argparser.add_argument('--importance-sampling', type=int, default=0)
     argparser.add_argument('--layer-dependency', action='store_true')
-    argparser.add_argument('--batch-dependency', type=int, default=1)
     argparser.add_argument('--logdir', type=str, default='tb_logs')
     argparser.add_argument('--vertex-limit', type=int, default=-1)
     argparser.add_argument('--use-uva', action='store_true')
+    argparser.add_argument('--undirected', action='store_true')
+    argparser.add_argument('--val-acc-target', type=float, default=1)
     args = argparser.parse_args()
 
     if args.gpu >= 0:
@@ -296,9 +302,9 @@ if __name__ == '__main__':
         device = th.device('cpu')
 
     datamodule = DataModule(
-        args.dataset, args.data_cpu, args.graph_cpu, args.use_uva,
+        args.dataset, args.undirected, args.data_cpu, args.graph_cpu, args.use_uva,
         [int(_) for _ in args.fan_out.split(',')],
-        device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling, args.layer_dependency, args.batch_dependency)
+        device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling, args.layer_dependency)
     model = SAGELightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
         F.relu, args.dropout, args.lr, datamodule.multilabel)
@@ -306,24 +312,31 @@ if __name__ == '__main__':
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
     batchsize_callback = BatchSizeCallback(args.vertex_limit)
-    subdir = '{}_{}_{}_{}_{}'.format(args.dataset, args.sampler, args.importance_sampling, args.layer_dependency, args.batch_dependency)
+    earlystopping_callback = EarlyStopping(monitor='val_acc', stopping_threshold=args.val_acc_target, mode='max', patience=20)
+
+    subdir = '{}_{}_{}_{}'.format(args.dataset, args.sampler, args.importance_sampling, args.layer_dependency)
     logger = TensorBoardLogger(args.logdir, name=subdir)
     trainer = Trainer(gpus=[args.gpu] if args.gpu != -1 else None,
                       max_epochs=args.num_epochs,
                       max_steps=args.num_steps,
-                      callbacks=[checkpoint_callback, batchsize_callback],
+                      callbacks=[batchsize_callback, earlystopping_callback], # , checkpoint_callback],
                       logger=logger)
     trainer.fit(model, datamodule=datamodule)
 
-    # Test
-    logdir = os.path.join(args.logdir, subdir)
-    dirs = glob.glob('./{}/*'.format(logdir))
-    version = max([int(os.path.split(x)[-1].split('_')[-1]) for x in dirs])
-    logdir = './{}/version_{}'.format(logdir, version)
-    print('Evaluating model in', logdir)
-    ckpt = glob.glob(os.path.join(logdir, 'checkpoints', '*'))[0]
+    if False:
+        # Test
+        logdir = os.path.join(args.logdir, subdir)
+        dirs = glob.glob('./{}/*'.format(logdir))
+        version = max([int(os.path.split(x)[-1].split('_')[-1]) for x in dirs])
+        logdir = './{}/version_{}'.format(logdir, version)
+        print('Evaluating model in', logdir)
+        ckpt = glob.glob(os.path.join(logdir, 'checkpoints', '*'))[0]
 
-    model = SAGELightning.load_from_checkpoint(
-        checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
-    test_acc = evaluate(model, datamodule.g, datamodule.test_nid, device)
-    print('Test accuracy:', test_acc)
+        model = SAGELightning.load_from_checkpoint(
+            checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
+        test_acc = evaluate(model, datamodule.g, datamodule.test_nid, device, args.batch_size, args.num_workers)
+        print('Test accuracy:', test_acc)
+        logger.log_metrics({'test_acc': test_acc})
+        logger.log_hyperparams({'num_hidden': args.num_hidden, 'num_layers': args.num_layers, 'fanout': args.fan_out, 'batch_size': args.batch_size, 'lr': args.lr, 'dropout': args.dropout, 'sampler': args.sampler, 'importance_sampling': args.importance_sampling, 'layer_dependency': args.layer_dependency})
+    else:
+        sys.exit(0 if trainer.callback_metrics['val_acc'] >= args.val_acc_target else 1)

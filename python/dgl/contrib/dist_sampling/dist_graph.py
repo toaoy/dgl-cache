@@ -40,7 +40,7 @@ from ... import backend as F
 from ... import ndarray as nd
 
 from ...dataloading.base import Sampler
-from ...heterograph import DGLHeteroGraph as DGLGraph
+from ...heterograph import DGLGraph
 
 def reorder_graph_wrapper(g, parts):
     new_g = g.reorder_graph(node_permute_algo='custom', edge_permute_algo='dst', store_ids=True, permute_config={'nodes_perm': th.cat(parts)})

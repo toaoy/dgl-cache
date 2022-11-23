@@ -33,7 +33,7 @@ import argparse
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from load_graph import load_reddit, load_ogb
+from load_graph import load_reddit, load_ogb, load_mag240m
 
 import nvtx
     
@@ -52,6 +52,88 @@ class SAGE(nn.Module):
         for layer, block in zip(self.layers, blocks):
             h = layer(block, h)
         return h
+
+class RGAT(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        hidden_channels,
+        num_etypes,
+        num_layers,
+        num_heads,
+        dropout,
+        pred_ntype,
+    ):
+        super().__init__()
+        self.convs = nn.ModuleList()
+        self.norms = nn.ModuleList()
+        self.skips = nn.ModuleList()
+
+        self.convs.append(
+            nn.ModuleList(
+                [
+                    dglnn.GATConv(
+                        in_channels,
+                        hidden_channels // num_heads,
+                        num_heads,
+                        allow_zero_in_degree=True,
+                    )
+                    for _ in range(num_etypes)
+                ]
+            )
+        )
+        self.norms.append(nn.BatchNorm1d(hidden_channels))
+        self.skips.append(nn.Linear(in_channels, hidden_channels))
+        for _ in range(num_layers - 1):
+            self.convs.append(
+                nn.ModuleList(
+                    [
+                        dglnn.GATConv(
+                            hidden_channels,
+                            hidden_channels // num_heads,
+                            num_heads,
+                            allow_zero_in_degree=True,
+                        )
+                        for _ in range(num_etypes)
+                    ]
+                )
+            )
+            self.norms.append(nn.BatchNorm1d(hidden_channels))
+            self.skips.append(nn.Linear(hidden_channels, hidden_channels))
+
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.BatchNorm1d(hidden_channels),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_channels, out_channels),
+        )
+        self.dropout = nn.Dropout(dropout)
+
+        self.hidden_channels = hidden_channels
+        self.pred_ntype = pred_ntype
+        self.num_etypes = num_etypes
+
+    def forward(self, mfgs, x):
+        for i in range(len(mfgs)):
+            mfg = mfgs[i]
+            x_dst = x[: mfg.num_dst_nodes()]
+            n_src = mfg.num_src_nodes()
+            n_dst = mfg.num_dst_nodes()
+            mfg = dgl.block_to_graph(mfg)
+            x_skip = self.skips[i](x_dst)
+            for j in range(self.num_etypes):
+                subg = mfg.edge_subgraph(
+                    mfg.edata["etype"] == j, relabel_nodes=False
+                )
+                x_skip += self.convs[i][j](subg, (x, x_dst)).view(
+                    -1, self.hidden_channels
+                )
+            x = self.norms[i](x_skip)
+            x = F.elu(x)
+            x = self.dropout(x)
+        return self.mlp(x)
 
 def cross_entropy(block_outputs, cached_variables, pos_graph, neg_graph):
     block_outputs = DistConvFunction.apply(cached_variables, block_outputs)
@@ -97,11 +179,11 @@ def producer(args, g, train_idx, reverse_eids, device):
                     if it > 1:
                         out = outputs[it % 2]
                         out[-1]()
-                        yield out[:-1]
+                        yield epoch, out[:-1]
     it += 1
     out = outputs[it % 2]
     out[-1]()
-    yield out[:-1]
+    yield args.num_epochs, out[:-1]
 
 def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes, args):
     th.set_num_threads(os.cpu_count() // local_size)
@@ -122,8 +204,20 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
     num_hidden = args.num_hidden
 
     model = SAGE([g.dstdata['features'].shape[1]] + [num_hidden for _ in range(num_layers - 1)] + [num_classes], args.dropout, args.replication == 1).to(device)
+    if g.number_of_nodes() == 244160499:
+        model = RGAT(
+            g.ndata['features'].shape[1],
+            num_classes,
+            num_hidden,
+            5,
+            num_layers,
+            4,
+            args.dropout,
+            "paper",
+        )
     model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
     opt = th.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
+    sched = th.optim.lr_scheduler.StepLR(opt, step_size=25, gamma=0.25)
 
     if not args.train:
         for epoch in range(args.num_epochs):
@@ -150,7 +244,8 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
     st, end = th.cuda.Event(enable_timing=True), th.cuda.Event(enable_timing=True)
     st.record()
     it = 0
-    for out in producer(args, g, train_idx, reverse_eids, device):
+    last_epoch = 0
+    for epoch, out in producer(args, g, train_idx, reverse_eids, device):
         input_nodes = out[0]
         blocks = out[-1]
         x = blocks[0].srcdata.pop('features')
@@ -171,6 +266,9 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
             with nvtx.annotate("accuracy", color="purple"):
                 acc = MF.accuracy(y_hat, y)
         end.record()
+        if epoch != last_epoch:
+            sched.step()
+            last_epoch = epoch
         mem = th.cuda.max_memory_allocated() >> 20
         block_stats = [(block.num_src_nodes(), block.num_dst_nodes(), block.num_edges()) for block in blocks]
         end.synchronize()
@@ -214,7 +312,10 @@ def main(args):
     if args.replication <= 0:
         args.replication = world_size
 
-    g, n_classes = load_ogb(args.dataset) if args.dataset.startswith("ogbn") else load_reddit()
+    if args.dataset in ['ogbn-mag240M']:
+        g, n_classes = load_mag240m('/localscratch/ogb')
+    else:
+        g, n_classes = load_ogb(args.dataset, '/localscratch/ogb') if args.dataset.startswith("ogbn") else load_reddit()
 
     if args.undirected:
         g, reverse_eids = to_bidirected_with_reverse_mapping(remove_self_loop(g))

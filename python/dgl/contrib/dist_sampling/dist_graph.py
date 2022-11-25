@@ -43,17 +43,7 @@ from ...dataloading.base import Sampler
 from ...heterograph import DGLGraph
 
 def reorder_graph_wrapper(g, parts):
-    new_g = g.reorder_graph(node_permute_algo='custom', edge_permute_algo='dst', store_ids=True, permute_config={'nodes_perm': th.cat(parts)})
-    
-    for k, v in g.ndata.items():
-        if k != NID:
-            new_g.ndata[k] = v[new_g.ndata[NID]]
-    
-    for k, v in g.edata.items():
-        if k != EID:
-            new_g.edata[k] = v[new_g.edata[EID]]
-    
-    return new_g
+    return g.reorder_graph(node_permute_algo='custom', edge_permute_algo='dst', store_ids=False, permute_config={'nodes_perm': th.cat(parts)})
 
 def uniform_partition(g, n_procs, random=True):
     N = g.num_nodes()
@@ -97,17 +87,18 @@ class DistConv(th.nn.Module):
         return self.layer(block, h)
 
 class DistSampler(Sampler):
-    def __init__(self, g, sampler_t, fanouts, prefetch_node_feats=[], prefetch_labels=[], **kwargs):
+    def __init__(self, g, sampler_t, fanouts, prefetch_node_feats=[], prefetch_edge_feats=[], prefetch_labels=[], **kwargs):
         super().__init__()
         self.g = g
         self.samplers = [sampler_t([fanout], sort_src=True, output_device=self.g.device, **kwargs) for fanout in fanouts]
         self.prefetch_node_feats = prefetch_node_feats
+        self.prefetch_edge_feats = prefetch_edge_feats
         self.prefetch_labels = prefetch_labels
         self.output_device = self.g.device
     
     def sample(self, g, seed_nodes, exclude_eids=None):
         # ignore g as we already store DistGraph
-        return self.g.sample_blocks(seed_nodes, self.samplers, exclude_eids, self.prefetch_node_feats, self.prefetch_labels)
+        return self.g.sample_blocks(seed_nodes, self.samplers, exclude_eids, self.prefetch_node_feats, self.prefetch_edge_feats, self.prefetch_labels)
 
 class LocalDGLGraph(DGLGraph):
     def __init__(self, g, num_nodes):
@@ -371,7 +362,7 @@ class DistGraph(object):
         return self.rpull(srctensor, request_counts, requested_sizes, dstnodes, inv_ids)
 
     @nvtx.annotate("sample_blocks", color="purple")
-    def sample_blocks(self, seed_nodes, samplers, exclude_eids=None, prefetch_node_feats=[], prefetch_labels=[]):
+    def sample_blocks(self, seed_nodes, samplers, exclude_eids=None, prefetch_node_feats=[], prefetch_edge_feats=[], prefetch_labels=[]):
         blocks = []
         random_seed = self.get_random_seed(len(samplers))
         if not (th.all(self.pr[self.rank] <= seed_nodes) and th.all(seed_nodes < self.pr[self.rank + 1])):

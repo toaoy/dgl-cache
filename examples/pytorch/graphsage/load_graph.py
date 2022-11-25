@@ -25,7 +25,7 @@ def load_ogb(name, root="dataset"):
     labels = labels[:, 0]
 
     graph.ndata["features"] = graph.ndata.pop("feat")
-    graph.ndata["labels"] = labels
+    graph.ndata["labels"] = labels.long()
     in_feats = graph.ndata["features"].shape[1]
     num_labels = len(th.unique(labels[th.logical_not(th.isnan(labels))]))
 
@@ -62,7 +62,7 @@ def load_mag240m(root="dataset"):
     paper_offset = dataset.num_authors + dataset.num_institutions
     num_nodes = paper_offset + dataset.num_papers
     num_features = dataset.num_paper_features
-    feats = th.from_numpy(np.memmap(
+    feats = th.tensor(np.memmap(
         join(root, 'mag240m_kddcup2021/full.npy'),
         mode="r",
         dtype="float16",
@@ -81,7 +81,7 @@ def load_mag240m(root="dataset"):
     g.ndata["train_mask"] = train_mask
     g.ndata["val_mask"] = val_mask
     # g.ndata["test_mask"] = test_mask
-    labels = th.from_numpy(dataset.paper_label)
+    labels = th.tensor(dataset.paper_label)
     num_labels = len(th.unique(labels[th.logical_not(th.isnan(labels))]))
     g.ndata["labels"] = - th.ones(g.number_of_nodes(), dtype=th.int64)
     g.ndata["labels"][train_nid] = labels[train_nid - paper_offset].long()

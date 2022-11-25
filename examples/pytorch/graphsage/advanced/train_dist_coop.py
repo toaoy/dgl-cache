@@ -28,7 +28,6 @@ import dgl
 import dgl.nn as dglnn
 from dgl.contrib.dist_sampling import DistConv, DistConvFunction, DistGraph, DistSampler, metis_partition, uniform_partition, reorder_graph_wrapper
 from dgl.transforms.functional import remove_self_loop
-import numpy as np
 import argparse
 import sys
 import os
@@ -36,6 +35,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from load_graph import load_reddit, load_ogb, load_mag240m
 
 import nvtx
+
+# import heartrate
+# heartrate.trace(browser=True)
     
 class SAGE(nn.Module):
     def __init__(self, num_feats, dropout, replicated=False):
@@ -64,6 +66,7 @@ class RGAT(nn.Module):
         num_heads,
         dropout,
         pred_ntype,
+        replicated=False
     ):
         super().__init__()
         self.convs = nn.ModuleList()
@@ -114,10 +117,13 @@ class RGAT(nn.Module):
         self.hidden_channels = hidden_channels
         self.pred_ntype = pred_ntype
         self.num_etypes = num_etypes
+        self.replicated = replicated
 
     def forward(self, mfgs, x):
         for i in range(len(mfgs)):
             mfg = mfgs[i]
+            if i != 0 and not self.replicated:
+                x = DistConvFunction.apply(mfg.cached_variables, x)
             x_dst = x[: mfg.num_dst_nodes()]
             n_src = mfg.num_src_nodes()
             n_dst = mfg.num_dst_nodes()
@@ -203,8 +209,7 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
     num_layers = args.num_layers
     num_hidden = args.num_hidden
 
-    model = SAGE([g.dstdata['features'].shape[1]] + [num_hidden for _ in range(num_layers - 1)] + [num_classes], args.dropout, args.replication == 1).to(device)
-    if g.number_of_nodes() == 244160499:
+    if args.dataset in ['ogbn-mag240M']:
         model = RGAT(
             g.ndata['features'].shape[1],
             num_classes,
@@ -214,7 +219,11 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
             4,
             args.dropout,
             "paper",
+            args.replication==1
         )
+    else:
+        model = SAGE([g.dstdata['features'].shape[1]] + [num_hidden for _ in range(num_layers - 1)] + [num_classes], args.dropout, args.replication == 1).to(device)
+
     model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
     opt = th.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
     sched = th.optim.lr_scheduler.StepLR(opt, step_size=25, gamma=0.25)
@@ -312,26 +321,35 @@ def main(args):
     if args.replication <= 0:
         args.replication = world_size
 
-    if args.dataset in ['ogbn-mag240M']:
-        g, n_classes = load_mag240m('/localscratch/ogb')
-    else:
-        g, n_classes = load_ogb(args.dataset, '/localscratch/ogb') if args.dataset.startswith("ogbn") else load_reddit()
-
-    if args.undirected:
-        g, reverse_eids = to_bidirected_with_reverse_mapping(remove_self_loop(g))
-        g.edata['is_reverse'] = th.zeros(g.num_edges(), dtype=th.bool)
-        g.edata['is_reverse'][reverse_eids] = True
-
-    if args.partition == 'metis':
-        parts = metis_partition(g, world_size)
-    elif args.partition == 'random':
-        th.manual_seed(0)
-        parts = uniform_partition(g, world_size)
-    else:
+    fn_list = [fn for fn in os.listdir(args.root_dir) if fn.startswith(args.dataset)]
+    if fn_list:
+        gs, ls = dgl.load_graphs(os.path.join(args.root_dir, fn_list[0]))
+        g = gs[0]
+        n_classes = ls['n_classes'][0].item()
         parts = [th.arange(i * g.num_nodes() // world_size, (i + 1) * g.num_nodes() // world_size) for i in range(world_size)]
-    g = reorder_graph_wrapper(g, parts)
+    else:
+        if args.dataset in ['ogbn-mag240M']:
+            g, n_classes = load_mag240m(args.root_dir)
+        else:
+            g, n_classes = load_ogb(args.dataset, args.root_dir) if args.dataset.startswith("ogbn") else load_reddit()
+
+        if args.undirected:
+            g, reverse_eids = to_bidirected_with_reverse_mapping(remove_self_loop(g))
+            g.edata['is_reverse'] = th.zeros(g.num_edges(), dtype=th.bool)
+            g.edata['is_reverse'][reverse_eids] = True
+
+        if args.partition == 'metis':
+            parts = metis_partition(g, world_size)
+        elif args.partition == 'random':
+            th.manual_seed(0)
+            parts = uniform_partition(g, world_size)
+        else:
+            parts = [th.arange(i * g.num_nodes() // world_size, (i + 1) * g.num_nodes() // world_size) for i in range(world_size)]
+        g = reorder_graph_wrapper(g, parts)
     
-    g.create_formats_()
+        dgl.save_graphs(os.path.join(args.root_dir, '{}_{}_{}'.format(args.dataset, g.number_of_nodes(), g.number_of_edges())), [g], {'n_classes': th.tensor([n_classes])})
+
+    # g.create_formats_()
 
     th.multiprocessing.spawn(train, args=(local_size, group_rank, world_size, g, [len(part) for part in parts], n_classes, args), nprocs=local_size)
 
@@ -351,5 +369,6 @@ if __name__ == '__main__':
     argparser.add_argument('--undirected', action='store_true')
     argparser.add_argument('--train', action='store_true')
     argparser.add_argument('--replication', type=int, default=0)
+    argparser.add_argument('--root-dir', type=str, default='/localscratch/ogb')
     args = argparser.parse_args()
     main(args)

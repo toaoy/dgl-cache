@@ -20,9 +20,9 @@ from . import backend as F
 from .frame import Frame
 from .view import HeteroNodeView, HeteroNodeDataView, HeteroEdgeView, HeteroEdgeDataView
 
-__all__ = ['DGLHeteroGraph', 'combine_names']
+__all__ = ['DGLGraph', 'combine_names']
 
-class DGLHeteroGraph(object):
+class DGLGraph(object):
     """Class for storing graph structure and node/edge feature data.
 
     There are a few ways to create a DGLGraph:
@@ -66,7 +66,7 @@ class DGLHeteroGraph(object):
             Otherwise, ``edge_frames[i]`` stores the edge features
             of edge type i. (default: None)
         """
-        if isinstance(gidx, DGLHeteroGraph):
+        if isinstance(gidx, DGLGraph):
             raise DGLError('The input is already a DGLGraph. No need to create it again.')
         if not isinstance(gidx, heterograph_index.HeteroGraphIndex):
             dgl_warning('Recommend creating graphs by `dgl.graph(data)`'
@@ -97,7 +97,7 @@ class DGLHeteroGraph(object):
                 errmsg = 'Invalid input. Expect a pair (srctypes, dsttypes) but got {}'.format(
                     ntypes)
                 raise TypeError(errmsg)
-            if not is_unibipartite(self._graph.metagraph):
+            if not self._graph.is_metagraph_unibipartite():
                 raise ValueError('Invalid input. The metagraph must be a uni-directional'
                                  ' bipartite graph.')
             self._ntypes = ntypes[0] + ntypes[1]
@@ -5476,7 +5476,7 @@ class DGLHeteroGraph(object):
 
         Returns
         -------
-        DGLHeteroGraph
+        DGLGraph
             Graph on CPU.
 
         See Also
@@ -5584,12 +5584,37 @@ class DGLHeteroGraph(object):
         """
         return self._graph.is_pinned()
 
+    def record_stream(self, stream):
+        """Record the stream that is using this graph.
+        This method only supports the PyTorch backend and requires graphs on the GPU.
+
+        Parameters
+        ----------
+        stream : torch.cuda.Stream
+            The stream that is using this graph.
+
+        Returns
+        -------
+        DGLGraph
+            self.
+        """
+        if F.get_preferred_backend() != 'pytorch':
+            raise DGLError("record_stream only support the PyTorch backend.")
+        if F.device_type(self.device) != 'cuda':
+            raise DGLError("The graph must be on GPU to be recorded.")
+        self._graph.record_stream(stream)
+        for frame in itertools.chain(self._node_frames, self._edge_frames):
+            for col in frame._columns.values():
+                col.record_stream(stream)
+
+        return self
+
     def clone(self):
         """Return a heterograph object that is a clone of current graph.
 
         Returns
         -------
-        DGLHeteroGraph
+        DGLGraph
             The graph object that is a clone of current graph.
         """
         # XXX(minjie): Do a shallow copy first to clone some internal metagraph information.
@@ -5894,7 +5919,7 @@ class DGLHeteroGraph(object):
 
         Returns
         -------
-        DGLHeteroGraph
+        DGLGraph
             Graph in the new ID type.
         """
         if idtype is None:
@@ -5911,7 +5936,7 @@ class DGLHeteroGraph(object):
     def shared_memory(self, name, formats=('coo', 'csr', 'csc')):
         """Return a copy of this graph in shared memory, without node data or edge data.
 
-        It moves the graph index to shared memory and returns a DGLHeterograph object which
+        It moves the graph index to shared memory and returns a DGLGraph object which
         has the same graph structure, node types and edge types but does not contain node data
         or edge data.
 
@@ -5924,7 +5949,7 @@ class DGLHeteroGraph(object):
 
         Returns
         -------
-        HeteroGraph
+        DGLGraph
             The graph in shared memory
         """
         assert len(name) > 0, "The name of shared memory cannot be empty"
@@ -5934,7 +5959,7 @@ class DGLHeteroGraph(object):
         for fmt in formats:
             assert fmt in ("coo", "csr", "csc"), '{} is not coo, csr or csc'.format(fmt)
         gidx = self._graph.shared_memory(name, self.ntypes, self.etypes, formats)
-        return DGLHeteroGraph(gidx, self.ntypes, self.etypes)
+        return DGLGraph(gidx, self.ntypes, self.etypes)
 
 
     def long(self):
@@ -6179,23 +6204,6 @@ def make_canonical_etypes(etypes, ntypes, metagraph):
     rst = [(ntypes[sid], etypes[eid], ntypes[did]) for sid, did, eid in zip(src, dst, eid)]
     return rst
 
-def is_unibipartite(graph):
-    """Internal function that returns whether the given graph is a uni-directional
-    bipartite graph.
-
-    Parameters
-    ----------
-    graph : GraphIndex
-        Input graph
-
-    Returns
-    -------
-    bool
-        True if the graph is a uni-bipartite.
-    """
-    src, dst, _ = graph.edges()
-    return set(src.tonumpy()).isdisjoint(set(dst.tonumpy()))
-
 def find_src_dst_ntypes(ntypes, metagraph):
     """Internal function to split ntypes into SRC and DST categories.
 
@@ -6366,7 +6374,7 @@ def combine_names(names, ids=None):
         selected = sorted([names[i] for i in ids])
         return '+'.join(selected)
 
-class DGLBlock(DGLHeteroGraph):
+class DGLBlock(DGLGraph):
     """Subclass that signifies the graph is a block created from
     :func:`dgl.to_block`.
     """
@@ -6457,7 +6465,7 @@ def _create_compute_graph(graph, u, v, eid, recv_nodes=None):
     eframe = graph._edge_frames[0].subframe(eid)
     eframe[EID] = eid
 
-    return DGLHeteroGraph(hgidx, ([srctype], [dsttype]), [etype],
+    return DGLGraph(hgidx, ([srctype], [dsttype]), [etype],
                           node_frames=[srcframe, dstframe],
                           edge_frames=[eframe]), unique_src, unique_dst, eid
 

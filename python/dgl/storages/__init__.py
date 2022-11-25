@@ -1,11 +1,11 @@
 """Feature storage classes for DataLoading"""
 from .. import backend as F
-from .gpu_cache import GPUCachedTensorStorage
-
 from .base import *
+from .gpu_cache import GPUCachedTensorStorage
 from .numpy import *
+
 # Defines the name TensorStorage
-if F.get_preferred_backend() == 'pytorch':
+if F.get_preferred_backend() == "pytorch":
     from .pytorch_tensor import PyTorchTensorStorage as TensorStorage
 else:
     from .tensor import BaseTensorStorage as TensorStorage

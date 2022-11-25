@@ -88,7 +88,7 @@ class RelGraphConvLayer(nn.Module):
 
         Parameters
         ----------
-        g : DGLHeteroGraph
+        g : DGLGraph
             Input graph.
         inputs : dict[str, torch.Tensor]
             Node feature for each node type.
@@ -164,14 +164,14 @@ class RelGraphEmbed(nn.Module):
 
         Parameters
         ----------
-        block : DGLHeteroGraph, optional
+        block : DGLGraph, optional
             If not specified, directly return the full graph with embeddings stored in
             :attr:`embed_name`. Otherwise, extract and store the embeddings to the block
             graph and return.
 
         Returns
         -------
-        DGLHeteroGraph
+        DGLGraph
             The block graph fed with embeddings.
         """
         embeds = {}
@@ -288,24 +288,26 @@ def track_time(data):
     optimizer.zero_grad()
     sparse_optimizer.zero_grad()
 
-    for step, (input_nodes, seeds, blocks) in enumerate(loader):
-        blocks = [blk.to(device) for blk in blocks]
-        seeds = seeds[category]     # we only predict the nodes with type "category"
-        batch_tic = time.time()
-        emb = embed_layer(blocks[0])
-        lbl = labels[seeds].to(device)
-        emb = {k : e.to(device) for k, e in emb.items()}
-        logits = model(emb, blocks)[category]
-        loss = F.cross_entropy(logits, lbl)
-        loss.backward()
-        optimizer.step()
-        sparse_optimizer.step()
+    # Enable dataloader cpu affinitization for cpu devices (no effect on gpu)
+    with loader.enable_cpu_affinity():
+        for step, (input_nodes, seeds, blocks) in enumerate(loader):
+            blocks = [blk.to(device) for blk in blocks]
+            seeds = seeds[category]     # we only predict the nodes with type "category"
+            batch_tic = time.time()
+            emb = embed_layer(blocks[0])
+            lbl = labels[seeds].to(device)
+            emb = {k : e.to(device) for k, e in emb.items()}
+            logits = model(emb, blocks)[category]
+            loss = F.cross_entropy(logits, lbl)
+            loss.backward()
+            optimizer.step()
+            sparse_optimizer.step()
 
-        # start timer at before iter_start
-        if step == iter_start - 1:
-            t0 = time.time()
-        elif step == iter_count + iter_start - 1:  # time iter_count iterations
-            break
+            # start timer at before iter_start
+            if step == iter_start - 1:
+                t0 = time.time()
+            elif step == iter_count + iter_start - 1:  # time iter_count iterations
+                break
 
     t1 = time.time()
 

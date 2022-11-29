@@ -161,7 +161,7 @@ def cross_entropy(block_outputs, cached_variables, pos_graph, neg_graph):
 def producer(args, g, train_idx, reverse_eids, device):
     fanouts = [int(_) for _ in args.fan_out.split(',')]
 
-    sampler = DistSampler(g, dgl.dataloading.NeighborSampler, fanouts, ['features'], [] if args.edge_pred else ['labels'])
+    sampler = DistSampler(g, dgl.dataloading.NeighborSampler, fanouts, ['features'], [], [] if args.edge_pred else ['labels'])
     if args.edge_pred:
         sampler = dgl.dataloading.as_edge_prediction_sampler(sampler, exclude='reverse_id', reverse_eids=reverse_eids,
                     negative_sampler=dgl.dataloading.negative_sampler.Uniform(1))
@@ -199,7 +199,7 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
     global_rank = group_rank * local_size + local_rank
     thd.init_process_group('nccl', 'env://', world_size=world_size, rank=global_rank)
 
-    g = DistGraph(g, parts, args.replication)
+    g = DistGraph(g, parts, args.replication, args.uva_ndata.split(','))
 
     train_idx = th.nonzero(g.dstdata['train_mask'], as_tuple=True)[0] + g.l_offset
     val_idx = th.nonzero(g.dstdata['val_mask'], as_tuple=True)[0] + g.l_offset
@@ -370,5 +370,6 @@ if __name__ == '__main__':
     argparser.add_argument('--train', action='store_true')
     argparser.add_argument('--replication', type=int, default=0)
     argparser.add_argument('--root-dir', type=str, default='/localscratch/ogb')
+    argparser.add_argument('--uva-ndata', type=str, default='')
     args = argparser.parse_args()
     main(args)

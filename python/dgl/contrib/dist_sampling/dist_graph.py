@@ -28,10 +28,10 @@ import torch.distributed as thd
 from ...subgraph import in_subgraph
 from ...base import NID, EID
 
-from ...convert import graph, create_block
+from ..unified_tensor import UnifiedTensor
+
+from ...convert import graph
 from ...heterograph_index import create_unitgraph_from_coo
-from ...function import copy_src
-from ...function import sum as fsum
 from ...sparse import lighter_gspmm
 
 from ...partition import metis_partition_assignment
@@ -114,7 +114,7 @@ class DistGraph(object):
     We assume that torch.cuda.device() is called to set the GPU for the all processes
     We will rely on torch.cuda.current_device() to get the device.
     '''
-    def __init__(self, g, g_parts, replication=0, compress=False):
+    def __init__(self, g, g_parts, replication=0, uva_ndata=[], uva_edata=[], compress=False):
 
         assert(thd.is_available()
             and thd.is_initialized()
@@ -230,12 +230,12 @@ class DistGraph(object):
         
         for k, v in list(g.ndata.items()):
             if k != NID:
-                self.dstdata[k] = v[g_NID].to(self.device)
+                self.dstdata[k] = v[g_NID].to(self.device) if k not in uva_ndata else UnifiedTensor(v[g_NID], self.device)
                 g.ndata.pop(k)
         
         for k, v in list(g.edata.items()):
             if k != EID:
-                self.g.edata[k] = v[g_EID].to(self.device)
+                self.g.edata[k] = v[g_EID].to(self.device) if k not in uva_edata else UnifiedTensor(v[g_EID], self.device)
                 g.edata.pop(k)
         
         print(self.rank, self.g.num_nodes(), self.pr, self.g_pr, self.l_offset, self.node_ranges, self.g_node_ranges, self.permute, self.inv_permute)

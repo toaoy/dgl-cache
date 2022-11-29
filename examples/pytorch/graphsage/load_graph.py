@@ -62,12 +62,12 @@ def load_mag240m(root="dataset"):
     paper_offset = dataset.num_authors + dataset.num_institutions
     num_nodes = paper_offset + dataset.num_papers
     num_features = dataset.num_paper_features
-    feats = th.HalfTensor(np.memmap(
+    feats = th.tensor(np.memmap(
         join(root, 'mag240m_kddcup2021/full.npy'),
         mode="r",
         dtype="float16",
         shape=(num_nodes, num_features),
-        ))
+        ), dtype=th.half)
     g.ndata["features"] = feats
     train_nid = th.LongTensor(dataset.get_idx_split("train")) + paper_offset
     val_nid = th.LongTensor(dataset.get_idx_split("valid")) + paper_offset

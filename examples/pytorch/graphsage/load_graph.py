@@ -62,7 +62,7 @@ def load_mag240m(root="dataset"):
     paper_offset = dataset.num_authors + dataset.num_institutions
     num_nodes = paper_offset + dataset.num_papers
     num_features = dataset.num_paper_features
-    feats = th.tensor(np.memmap(
+    feats = th.HalfTensor(np.memmap(
         join(root, 'mag240m_kddcup2021/full.npy'),
         mode="r",
         dtype="float16",

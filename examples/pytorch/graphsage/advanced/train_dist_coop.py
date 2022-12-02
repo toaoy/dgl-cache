@@ -211,7 +211,7 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
 
     if args.dataset in ['ogbn-mag240M']:
         model = RGAT(
-            g.ndata['features'].shape[1],
+            g.dstdata['features'].shape[1],
             num_classes,
             num_hidden,
             5,
@@ -222,7 +222,8 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
             args.replication==1
         )
     else:
-        model = SAGE([g.dstdata['features'].shape[1]] + [num_hidden for _ in range(num_layers - 1)] + [num_classes], args.dropout, args.replication == 1).to(device)
+        model = SAGE([g.dstdata['features'].shape[1]] + [num_hidden for _ in range(num_layers - 1)] + [num_classes], args.dropout, args.replication == 1)
+    model = model.to(device)
 
     model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
     opt = th.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
@@ -346,10 +347,10 @@ def main(args):
         else:
             parts = [th.arange(i * g.num_nodes() // world_size, (i + 1) * g.num_nodes() // world_size) for i in range(world_size)]
         g = reorder_graph_wrapper(g, parts)
-    
+
         dgl.save_graphs(os.path.join(args.root_dir, '{}_{}_{}'.format(args.dataset, g.number_of_nodes(), g.number_of_edges())), [g], {'n_classes': th.tensor([n_classes])})
 
-    # g.create_formats_()
+    g = g.formats(['csc'])
 
     th.multiprocessing.spawn(train, args=(local_size, group_rank, world_size, g, [len(part) for part in parts], n_classes, args), nprocs=local_size)
 

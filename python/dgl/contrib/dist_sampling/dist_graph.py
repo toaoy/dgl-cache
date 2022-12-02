@@ -43,7 +43,8 @@ from ...dataloading.base import Sampler
 from ...heterograph import DGLGraph
 
 def reorder_graph_wrapper(g, parts):
-    return g.reorder_graph(node_permute_algo='custom', edge_permute_algo='dst', store_ids=False, permute_config={'nodes_perm': th.cat(parts)})
+    return g.reorder_graph(node_permute_algo='custom', # edge_permute_algo='dst', 
+    store_ids=False, permute_config={'nodes_perm': th.cat(parts)})
 
 def uniform_partition(g, n_procs, random=True):
     N = g.num_nodes()
@@ -224,19 +225,19 @@ class DistGraph(object):
             self.l_offset = self.g_pr[permute[self.rank]].item()
 
             self.dstdata = {}
-            g_NID = th.arange(self.g_pr[self.permute[self.rank]], self.g_pr[self.permute[self.rank] + 1], device=cpu_device)
+            g_NID = slice(self.g_pr[self.permute[self.rank]], self.g_pr[self.permute[self.rank] + 1])
 
         g_EID = self.g.edata[EID].to(cpu_device)
         
         for k, v in list(g.ndata.items()):
             if k != NID:
                 self.dstdata[k] = v[g_NID].to(self.device) if k not in uva_ndata else UnifiedTensor(v[g_NID], self.device)
-                g.ndata.pop(k)
+                # g.ndata.pop(k)
         
         for k, v in list(g.edata.items()):
             if k != EID:
                 self.g.edata[k] = v[g_EID].to(self.device) if k not in uva_edata else UnifiedTensor(v[g_EID], self.device)
-                g.edata.pop(k)
+                # g.edata.pop(k)
         
         print(self.rank, self.g.num_nodes(), self.pr, self.g_pr, self.l_offset, self.node_ranges, self.g_node_ranges, self.permute, self.inv_permute)
         pg_options = th._C._distributed_c10d.ProcessGroupNCCL.Options()

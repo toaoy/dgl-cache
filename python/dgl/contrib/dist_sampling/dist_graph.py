@@ -145,6 +145,13 @@ class DistGraph(object):
 
         my_g = in_subgraph(g, th.arange(node_ranges[self.l_rank], node_ranges[self.l_rank + 1]))
 
+        for k, v in list(g.ndata.items()):
+            my_g.ndata.pop(k)
+        
+        for k, v in list(g.edata.items()):
+            if k != EID:
+                my_g.edata.pop(k)
+
         num_dst_nodes = node_ranges[self.l_rank + 1] - node_ranges[self.l_rank]
 
         if compress:
@@ -228,6 +235,8 @@ class DistGraph(object):
             g_NID = slice(self.g_pr[self.permute[self.rank]], self.g_pr[self.permute[self.rank] + 1])
 
         g_EID = self.g.edata[EID].to(cpu_device)
+
+        self.g = self.g.formats(['csc'])
         
         for k, v in list(g.ndata.items()):
             if k != NID:
@@ -391,12 +400,12 @@ class DistGraph(object):
         def feature_slicer(block):
             srcdataevents = {}
             for k in prefetch_node_feats:
-                tensor = self.dstdata[k][requested_nodes - self.l_offset].to(self.device, th.float)
+                tensor = self.dstdata[k][requested_nodes - self.l_offset].to(self.device)
                 out = th.empty((sum(request_counts),) + tensor.shape[1:], dtype=tensor.dtype, device=tensor.device)
                 par_out = list(th.split(out, request_counts))
                 par_out = [par_out[i] for i in self.permute.tolist()]
                 work = self.all_to_all(par_out, list(th.split(tensor, requested_sizes)), True)
-                block.srcdata[k] = out
+                block.srcdata[k] = out.to(th.float)
                 srcdataevents[k] = work
             
             def wait(k=None):

@@ -124,7 +124,7 @@ class RGAT(nn.Module):
             mfg = mfgs[i]
             if i != 0 and not self.replicated:
                 x = DistConvFunction.apply(mfg.cached_variables, x)
-            x_dst = x[: mfg.num_dst_nodes()]
+            x_dst = x[mfg.dst_in_src]
             n_src = mfg.num_src_nodes()
             n_dst = mfg.num_dst_nodes()
             mfg = dgl.block_to_graph(mfg)
@@ -161,7 +161,10 @@ def cross_entropy(block_outputs, cached_variables, pos_graph, neg_graph):
 def producer(args, g, train_idx, reverse_eids, device):
     fanouts = [int(_) for _ in args.fan_out.split(',')]
 
-    sampler = DistSampler(g, dgl.dataloading.NeighborSampler, fanouts, ['features'], [], [] if args.edge_pred else ['labels'])
+    if args.sampler == 'labor':
+        sampler = DistSampler(g, dgl.dataloading.LaborSampler, fanouts, ['features'], [], [] if args.edge_pred else ['labels'], importance_sampling=args.importance_sampling)
+    else:
+        sampler = DistSampler(g, dgl.dataloading.NeighborSampler, fanouts, ['features'], [], [] if args.edge_pred else ['labels'])
     if args.edge_pred:
         sampler = dgl.dataloading.as_edge_prediction_sampler(sampler, exclude='reverse_id', reverse_eids=reverse_eids,
                     negative_sampler=dgl.dataloading.negative_sampler.Uniform(1))
@@ -258,6 +261,7 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
     for epoch, out in producer(args, g, train_idx, reverse_eids, device):
         input_nodes = out[0]
         blocks = out[-1]
+        block_stats = [(block.num_src_nodes(), block.num_dst_nodes(), block.num_edges()) for block in blocks]
         x = blocks[0].srcdata.pop('features')
         if not args.edge_pred:
             y = blocks[-1].dstdata.pop('labels')
@@ -280,7 +284,6 @@ def train(local_rank, local_size, group_rank, world_size, g, parts, num_classes,
             sched.step()
             last_epoch = epoch
         mem = th.cuda.max_memory_allocated() >> 20
-        block_stats = [(block.num_src_nodes(), block.num_dst_nodes(), block.num_edges()) for block in blocks]
         end.synchronize()
         print('rank: {}, it: {}, Loss: {:.4f}, Acc: {:.4f}, GPU Mem: {:.0f} MB, time: {:.3f}ms, stats: {}'.format(global_rank, it, loss.item(), acc.item(), mem, st.elapsed_time(end), block_stats))
         st, end = end, st
@@ -364,6 +367,8 @@ if __name__ == '__main__':
     argparser.add_argument('--fan-out', type=str, default='10,10,10')
     argparser.add_argument('--batch-size', type=int, default=1000)
     argparser.add_argument('--lr', type=float, default=0.001)
+    argparser.add_argument('--sampler', type=str, default='labor')
+    argparser.add_argument('--importance-sampling', type=int, default=0)
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--edge-pred', action='store_true')
     argparser.add_argument('--partition', type=str, default='random')

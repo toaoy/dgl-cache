@@ -135,6 +135,7 @@ class LaborSampler(BlockSampler):
         prob=None,
         importance_sampling=0,
         layer_dependency=False,
+        sort_src=False,
         prefetch_node_feats=None,
         prefetch_labels=None,
         prefetch_edge_feats=None,
@@ -152,6 +153,7 @@ class LaborSampler(BlockSampler):
         self.importance_sampling = importance_sampling
         self.layer_dependency = layer_dependency
         self.set_seed()
+        self.sorted_src = sort_src
 
     def set_seed(self, random_seed=None):
         """Updates the underlying seed for the sampler
@@ -203,7 +205,7 @@ class LaborSampler(BlockSampler):
             )
             eid = frontier.edata[EID]
             block = to_block(
-                frontier, seed_nodes, include_dst_in_src=True, src_nodes=None
+                frontier, seed_nodes, include_dst_in_src=True, src_nodes=None, sort_src=self.sorted_src
             )
             block.edata[EID] = eid
             if len(g.canonical_etypes) > 1:

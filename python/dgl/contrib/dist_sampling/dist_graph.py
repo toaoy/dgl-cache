@@ -400,12 +400,12 @@ class DistGraph(object):
         def feature_slicer(block):
             srcdataevents = {}
             for k in prefetch_node_feats:
-                tensor = self.dstdata[k][requested_nodes - self.l_offset].to(self.device)
+                tensor = self.dstdata[k][requested_nodes - self.l_offset].to(self.device, th.float) #
                 out = th.empty((sum(request_counts),) + tensor.shape[1:], dtype=tensor.dtype, device=tensor.device)
                 par_out = list(th.split(out, request_counts))
                 par_out = [par_out[i] for i in self.permute.tolist()]
                 work = self.all_to_all(par_out, list(th.split(tensor, requested_sizes)), True)
-                block.srcdata[k] = out.to(th.float)
+                block.srcdata[k] = out # .to(th.float)
                 srcdataevents[k] = work
             
             def wait(k=None):

@@ -35,7 +35,6 @@ struct COO {
   bool col_sorted = false;
 };
 
-
 /** @brief CSR sparse structure. */
 struct CSR {
   /** @brief The dense shape of the matrix. */
@@ -80,6 +79,9 @@ std::shared_ptr<CSR> COOToCSC(const std::shared_ptr<COO>& coo);
 
 /** @brief Convert a CSR format to CSC format. */
 std::shared_ptr<CSR> CSRToCSC(const std::shared_ptr<CSR>& csr);
+
+/** @brief COO transposition. */
+std::shared_ptr<COO> COOTranspose(const std::shared_ptr<COO>& coo);
 
 }  // namespace sparse
 }  // namespace dgl
